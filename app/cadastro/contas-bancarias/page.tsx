@@ -22,10 +22,12 @@ type ContaBancaria = {
   conta: string | null;     // "Conta"
   apelido: string | null;   // "Apelido"
   loja: number | null;      // "Loja"
-  considerar_fluxo: boolean; // considerar_fluxo
-  status: string | null;    // "Status"
+  considerar_fluxo: boolean; // considerar_fluxo (boolean)
+  status: string | null;    // "Status" (Ativo/Inativo)
   empresabpo: number | null; // empresabpo (bigint -> number)
 };
+
+type StatusFilter = 'all' | 'active' | 'inactive';
 
 const TABLE = 'contas_bancarias' as const;
 const PAGE_SIZE = 50;
@@ -62,6 +64,73 @@ function baseSelect() {
   `;
 }
 
+/* =============== Toggle 3D Reutilizável =============== */
+type Toggle3DProps = {
+  active: boolean;          // true = ativo (verde/direita)
+  disabled?: boolean;
+  onClick: () => void;
+  ariaLabel?: string;
+};
+function Toggle3D({ active, disabled, onClick, ariaLabel }: Toggle3DProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      aria-label={ariaLabel ?? (active ? 'Ativo' : 'Inativo')}
+      className={[
+        // trilho com profundidade
+        'relative inline-flex h-9 w-18 items-center rounded-full',
+        'border transition-colors duration-200',
+        'bg-gradient-to-b',
+        active
+          ? 'from-emerald-200 to-emerald-300 border-emerald-400'
+          : 'from-gray-100 to-gray-200 border-gray-300',
+        // “3D” com sombras internas e externas
+        'shadow-md',
+        active ? 'shadow-emerald-200/60' : 'shadow-gray-300/60',
+        disabled ? 'opacity-60 cursor-not-allowed' : 'hover:shadow-lg'
+      ].join(' ')}
+      style={{ width: '72px' }} // w-18 (72px) – garante espaço pro knob
+      title={active ? 'Ativo — clique para desativar' : 'Inativo — clique para ativar'}
+    >
+      {/* trilho interno (efeito "inset") */}
+      <span
+        aria-hidden="true"
+        className={[
+          'absolute inset-0 rounded-full',
+          'shadow-inner',
+          active ? 'shadow-emerald-600/10' : 'shadow-black/10'
+        ].join(' ')}
+      />
+      {/* knob */}
+      <span
+        aria-hidden="true"
+        className={[
+          'relative z-10 h-7 w-7 rounded-full',
+          'bg-white',
+          'transition-transform duration-200',
+          'shadow-[0_2px_0_#0000000a,0_6px_12px_#0000001a]',
+          'border border-black/5'
+        ].join(' ')}
+        style={{
+          transform: active ? 'translateX(39px)' : 'translateX(6px)', // esquerda≈6px, direita≈39px
+        }}
+      />
+      {/* ring suave quando ativo */}
+      <span
+        aria-hidden="true"
+        className={[
+          'absolute inset-0 rounded-full pointer-events-none',
+          active ? 'ring-1 ring-emerald-700/20' : 'ring-1 ring-black/10'
+        ].join(' ')}
+      />
+      <span className="sr-only">{active ? 'Ativo' : 'Inativo'}</span>
+    </button>
+  );
+}
+
 export default function ContasBancariasPage() {
   const supabase = createClientComponentClient();
 
@@ -78,6 +147,8 @@ export default function ContasBancariasPage() {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
 
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState<number | null>(null);
 
@@ -91,24 +162,17 @@ export default function ContasBancariasPage() {
     [page, total]
   );
 
-  /* ---------- sessão estável (getSession + onAuthStateChange) ---------- */
+  /* ---------- sessão estável ---------- */
   useEffect(() => {
     let mounted = true;
-
     (async () => {
       const { data, error } = await supabase.auth.getSession();
       if (!mounted) return;
-      if (error) {
-        setHasSession(false);
-      } else {
-        setHasSession(!!data?.session);
-      }
+      setHasSession(error ? false : !!data?.session);
     })();
-
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setHasSession(!!session);
     });
-
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
@@ -123,7 +187,6 @@ export default function ContasBancariasPage() {
   /* ---------- resolver codigo_erp a partir do cookie ---------- */
   useEffect(() => {
     let aborted = false;
-
     async function resolveEmpresa() {
       setResolvendoEmpresa(true);
       setEmpresaFiltro(null);
@@ -133,8 +196,6 @@ export default function ContasBancariasPage() {
         setResolvendoEmpresa(false);
         return;
       }
-
-      // se já for número -> é o codigo_erp
       if (/^\d+$/.test(val)) {
         if (!aborted) {
           setEmpresaFiltro(Number(val));
@@ -142,14 +203,11 @@ export default function ContasBancariasPage() {
         }
         return;
       }
-
-      // senão, pode ser id (uuid) ou texto ⇒ tenta resolver
       const { data, error } = await supabase
         .from('empresas_bpo')
         .select('codigo_erp')
         .or(`id.eq.${val},codigo_erp.eq.${val}`)
         .limit(1);
-
       if (!aborted) {
         if (!error && data && data.length > 0) {
           const codigo = data[0].codigo_erp;
@@ -158,7 +216,6 @@ export default function ContasBancariasPage() {
         setResolvendoEmpresa(false);
       }
     }
-
     resolveEmpresa();
     return () => {
       aborted = true;
@@ -174,7 +231,7 @@ export default function ContasBancariasPage() {
   /* ---------- resetar página ao mudar filtros ---------- */
   useEffect(() => {
     setPage(0);
-  }, [debouncedQ, empresaFiltro]);
+  }, [debouncedQ, empresaFiltro, statusFilter]);
 
   /* ---------- montar query ---------- */
   function buildQuery() {
@@ -183,25 +240,29 @@ export default function ContasBancariasPage() {
     if (empresaFiltro != null) {
       query = query.eq('empresabpo', empresaFiltro);
     } else {
-      // sem empresa resolvida ainda → evita retornar tudo acidentalmente
+      // evita retornar tudo acidentalmente
       query = query.eq('empresabpo', -999999999);
     }
 
     if (debouncedQ) {
       const pat = `%${debouncedQ.replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
-      // Referenciando colunas com aspas porque foram criadas quoted no schema
       query = query.or(`"Tipo".ilike.${pat},"Banco".ilike.${pat},"Conta".ilike.${pat},"Apelido".ilike.${pat}`);
+    }
+
+    if (statusFilter === 'active') {
+      query = query.eq('Status', 'Ativo');
+    } else if (statusFilter === 'inactive') {
+      query = query.eq('Status', 'Inativo');
     }
 
     return query;
   }
 
-  /* ---------- fetch com cancelamento e proteção a respostas atrasadas ---------- */
+  /* ---------- fetch controlado ---------- */
   const fetchCtrlRef = useRef<AbortController | null>(null);
   const reqIdRef = useRef(0);
 
   async function fetchData(withRetry = true) {
-    // cancela requisição anterior
     fetchCtrlRef.current?.abort();
     const ctrl = new AbortController();
     fetchCtrlRef.current = ctrl;
@@ -215,11 +276,9 @@ export default function ContasBancariasPage() {
       const to = from + PAGE_SIZE - 1;
 
       const { data, error, count } = await buildQuery().range(from, to);
-
       if (ctrl.signal.aborted || myReqId !== reqIdRef.current) return;
 
       if (error) {
-        // se foi falta de sessão inesperada, tenta 1x novamente após forçar getSession
         if (withRetry) {
           const { data: s } = await supabase.auth.getSession();
           if (s?.session) return fetchData(false);
@@ -233,7 +292,7 @@ export default function ContasBancariasPage() {
         setTotal(count ?? rows.length);
       }
     } catch (e: any) {
-      if (ctrl.signal.aborted) return; // navegação rápida
+      if (ctrl.signal.aborted) return;
       setErrorMsg(e?.message ?? 'Falha ao carregar.');
       setItems([]);
       setTotal(0);
@@ -242,39 +301,58 @@ export default function ContasBancariasPage() {
     }
   }
 
-  /* ---------- dispare o fetch quando tudo estiver pronto ---------- */
   useEffect(() => {
-    if (hasSession === null) return;            // esperando sessão inicial
-    if (!hasSession) {                          // sem sessão → mostre msg e não busca
+    if (hasSession === null) return;
+    if (!hasSession) {
       setItems([]);
       setTotal(0);
       setLoading(false);
       setErrorMsg('Sem sessão ativa. Faça login novamente.');
       return;
     }
-    if (resolvendoEmpresa) return;              // aguardando empresa
+    if (resolvendoEmpresa) return;
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSession, resolvendoEmpresa, empresaFiltro, page, debouncedQ]);
+  }, [hasSession, resolvendoEmpresa, empresaFiltro, page, debouncedQ, statusFilter]);
 
-  /* ---------- alternar status (usa number no filtro de Id) ---------- */
-  const [savingId, setSavingId] = useState<string | null>(null);
+  /* ---------- toggles com update otimista ---------- */
+  const [savingIdStatus, setSavingIdStatus] = useState<string | null>(null);
+  const [savingIdFluxo, setSavingIdFluxo] = useState<string | null>(null);
+
   async function toggleStatus(id: string, statusAtual: string | null) {
-    const proximo = (statusAtual || '').toLowerCase() === 'ativo' ? 'Inativo' : 'Ativo';
+    const next = (statusAtual || '').toLowerCase() === 'ativo' ? 'Inativo' : 'Ativo';
 
-    setSavingId(id);
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, status: proximo } : i)));
+    setSavingIdStatus(id);
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, status: next } : i)));
 
     const idNum = Number(id);
     const idFilter = Number.isFinite(idNum) ? idNum : id;
-
-    const { error } = await supabase.from(TABLE).update({ Status: proximo }).eq('Id', idFilter);
+    const { error } = await supabase.from(TABLE).update({ Status: next }).eq('Id', idFilter);
 
     if (error) {
+      // rollback
       setItems((prev) => prev.map((i) => (i.id === id ? { ...i, status: statusAtual } : i)));
       alert('Não foi possível alterar o status. Tente novamente.');
     }
-    setSavingId(null);
+    setSavingIdStatus(null);
+  }
+
+  async function toggleFluxo(id: string, atual: boolean) {
+    const next = !atual;
+
+    setSavingIdFluxo(id);
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, considerar_fluxo: next } : i)));
+
+    const idNum = Number(id);
+    const idFilter = Number.isFinite(idNum) ? idNum : id;
+    const { error } = await supabase.from(TABLE).update({ considerar_fluxo: next }).eq('Id', idFilter);
+
+    if (error) {
+      // rollback
+      setItems((prev) => prev.map((i) => (i.id === id ? { ...i, considerar_fluxo: atual } : i)));
+      alert('Não foi possível alterar "Considerar Fluxo". Tente novamente.');
+    }
+    setSavingIdFluxo(null);
   }
 
   /* ---------- busca local adicional (opcional) ---------- */
@@ -298,17 +376,53 @@ export default function ContasBancariasPage() {
     );
   }, [items, q]);
 
-  const ativoBadge = (ativo: boolean) =>
-    ativo ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700';
-
   return (
     <div className="min-h-screen bg-neutral-50">
       <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-semibold">Contas Bancárias</h1>
-          <Link href="/cadastro/contas-bancarias/novo" className="inline-flex items-center gap-2 rounded-2xl border px-4 py-2 shadow-sm hover:shadow transition">
-            <Plus size={18} /> Cadastrar novo
-          </Link>
+          <div className="flex items-center gap-2">
+            {/* Filtro de status */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600">Status:</label>
+              <div className="inline-flex overflow-hidden rounded-xl border bg-white">
+                <button
+                  onClick={() => setStatusFilter('all')}
+                  className={[
+                    'px-3 py-1.5 text-sm',
+                    statusFilter === 'all' ? 'bg-gray-100 font-medium' : 'hover:bg-gray-50'
+                  ].join(' ')}
+                >
+                  Todas
+                </button>
+                <button
+                  onClick={() => setStatusFilter('active')}
+                  className={[
+                    'px-3 py-1.5 text-sm',
+                    statusFilter === 'active' ? 'bg-emerald-50 text-emerald-700 font-medium' : 'hover:bg-gray-50'
+                  ].join(' ')}
+                >
+                  Ativas
+                </button>
+                <button
+                  onClick={() => setStatusFilter('inactive')}
+                  className={[
+                    'px-3 py-1.5 text-sm',
+                    statusFilter === 'inactive' ? 'bg-gray-50 text-gray-700 font-medium' : 'hover:bg-gray-50'
+                  ].join(' ')}
+                >
+                  Inativas
+                </button>
+              </div>
+            </div>
+
+            <Link
+              href="/cadastro/contas-bancarias/novo"
+              className="inline-flex items-center gap-2 rounded-2xl border px-4 py-2 shadow-sm hover:shadow transition"
+            >
+              <Plus size={18} /> Cadastrar novo
+            </Link>
+          </div>
         </div>
 
         {/* Busca + info */}
@@ -349,7 +463,7 @@ export default function ContasBancariasPage() {
               </tr>
             </thead>
             <tbody>
-              {loading || resolvendoEmpresa || hasSession === null ? (
+              {(loading || resolvendoEmpresa || hasSession === null) ? (
                 <tr>
                   <td colSpan={9} className="px-4 py-10 text-center text-gray-500">
                     <div className="inline-flex items-center gap-2">
@@ -371,7 +485,10 @@ export default function ContasBancariasPage() {
                 </tr>
               ) : (
                 filtrados.map((item) => {
-                  const ativo = (item.status || '').toLowerCase() === 'ativo';
+                  const isActive = (item.status || '').toLowerCase() === 'ativo';
+                  const savingStatus = savingIdStatus === item.id;
+                  const savingFluxo = savingIdFluxo === item.id;
+
                   return (
                     <tr key={item.id} className="border-t hover:bg-gray-50/60">
                       <td className="px-4 py-3">{item.tipo ?? '-'}</td>
@@ -380,37 +497,42 @@ export default function ContasBancariasPage() {
                       <td className="px-4 py-3">{item.conta ?? '-'}</td>
                       <td className="px-4 py-3">{item.apelido ?? '-'}</td>
                       <td className="px-4 py-3">{item.loja ?? '-'}</td>
+
+                      {/* Considerar Fluxo (toggle 3D) */}
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs border ${item.considerar_fluxo ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
-                          {item.considerar_fluxo ? 'Sim' : 'Não'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <Toggle3D
+                            active={item.considerar_fluxo}
+                            disabled={savingFluxo}
+                            onClick={() => toggleFluxo(item.id, item.considerar_fluxo)}
+                            ariaLabel="Considerar Fluxo"
+                          />
+                          {savingFluxo && <Loader2 className="h-4 w-4 animate-spin text-gray-500" />}
+                        </div>
                       </td>
+
+                      {/* Status (toggle 3D) */}
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs border ${ativo ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
-                          {ativo ? 'Ativo' : 'Inativo'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <Toggle3D
+                            active={isActive}
+                            disabled={savingStatus}
+                            onClick={() => toggleStatus(item.id, item.status)}
+                            ariaLabel="Status da conta"
+                          />
+                          {savingStatus && <Loader2 className="h-4 w-4 animate-spin text-gray-500" />}
+                        </div>
                       </td>
+
                       <td className="px-4 py-3 text-right">
                         <div className="inline-flex items-center gap-2">
-                          <Link href={`/cadastro/contas-bancarias/${item.id}`} className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50" title="Editar">
+                          <Link
+                            href={`/cadastro/contas-bancarias/${item.id}`}
+                            className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50"
+                            title="Editar"
+                          >
                             Editar
                           </Link>
-                          <button
-                            onClick={() => toggleStatus(item.id, item.status)}
-                            className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-60"
-                            disabled={savingId === item.id}
-                            title={ativo ? 'Desativar' : 'Reativar'}
-                          >
-                            {savingId === item.id ? (
-                              <span className="inline-flex items-center gap-2">
-                                <Loader2 className="animate-spin" size={14} /> Salvando…
-                              </span>
-                            ) : ativo ? (
-                              'Desativar'
-                            ) : (
-                              'Ativar'
-                            )}
-                          </button>
                         </div>
                       </td>
                     </tr>

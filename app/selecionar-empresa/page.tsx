@@ -1,5 +1,5 @@
 // app/selecionar-empresa/page.tsx
-import { createServerComponentClient } from "@/lib/supabase/serverComponentClient";
+import { createServerComponentClient } from "@/lib/supabase/serverClient";
 import { redirect } from "next/navigation";
 import { CompanySelector } from "./selecionar-empresa";
 

@@ -7,13 +7,15 @@ import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@/lib/supabase/clientComponentClient";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
-// Componente de Input reutilizável para manter o formulário limpo
-function Input({ label, id, ...props }: { label: string; id: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+// Input reutilizável
+function Input({
+  label,
+  id,
+  ...props
+}: { label: string; id: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <div>
-      <label htmlFor={id} className="block text-sm font-medium text-gray-700">
-        {label}
-      </label>
+      <label htmlFor={id} className="block text-sm font-medium text-gray-700">{label}</label>
       <div className="mt-1">
         <input
           id={id}
@@ -34,48 +36,56 @@ export default function NovaEmpresaBPOPage() {
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setErrorMsg(null);
-    setSuccessMsg(null);
 
     const formData = new FormData(event.currentTarget);
     const data = Object.fromEntries(formData.entries());
 
-    // Validação simples: codigo_erp é obrigatório
-    if (!data.codigo_erp) {
+    // validação simples
+    const codigoStr = String(data.codigo_erp || "").trim();
+    if (!codigoStr) {
       setErrorMsg("O campo 'Código ERP' é obrigatório.");
       setLoading(false);
       return;
     }
+    if (!/^\d+$/.test(codigoStr)) {
+      setErrorMsg("O 'Código ERP' deve conter apenas números.");
+      setLoading(false);
+      return;
+    }
 
-    // Converte valores vazios para null para o Supabase
+    // monta payload (status sempre true)
     const submission = {
-      codigo_erp: data.codigo_erp,
-      razao_social: data.razao_social || null,
-      nome_fantasia: data.nome_fantasia || null,
-      cpf_cnpj: data.cpf_cnpj || null,
-      STATUS: data.status || null,
-      data_inicio: data.data_inicio || null,
-      honorario_mensal: data.honorario_mensal ? Number(data.honorario_mensal) : null,
+      codigo_erp: Number(codigoStr), // bigint
+      razao_social: (data.razao_social as string)?.trim() || null,
+      nome_fantasia: (data.nome_fantasia as string)?.trim() || null,
+      cpf_cnpj: (data.cpf_cnpj as string)?.trim() || null,
+      status: true, // ← sempre ativo ao cadastrar
+      data_inicio: (data.data_inicio as string) || null,
+      honorario_mensal: (data.honorario_mensal as string)
+        ? Number(data.honorario_mensal)
+        : null,
     };
 
     const { error } = await supabase.from(TABLE_NAME).insert(submission);
 
+    setLoading(false);
+
     if (error) {
       console.error("Erro ao inserir empresa:", error);
       setErrorMsg(`Erro ao salvar: ${error.message}`);
-      setLoading(false);
+      return;
+    }
+
+    // sucesso → voltar para a listagem
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
     } else {
-      setSuccessMsg("Empresa cadastrada com sucesso! Redirecionando...");
-      // Redireciona para a página de listagem após um curto intervalo
-      setTimeout(() => {
-        router.push("/cadastro/clientes-bpo");
-        router.refresh(); // Força a atualização dos dados na página de listagem
-      }, 1500);
+      router.push("/cadastro/clientes-bpo");
     }
   }
 
@@ -99,6 +109,7 @@ export default function NovaEmpresaBPOPage() {
               label="Código ERP"
               id="codigo_erp"
               type="text"
+              inputMode="numeric"
               required
               placeholder="Ex: 102030"
             />
@@ -120,17 +131,8 @@ export default function NovaEmpresaBPOPage() {
               type="text"
               placeholder="00.000.000/0001-00"
             />
-            <Input
-              label="Status"
-              id="status"
-              type="text"
-              placeholder="Ativo"
-            />
-            <Input
-              label="Data de Início"
-              id="data_inicio"
-              type="date"
-            />
+            {/* Status removido — sempre ativo no insert */}
+            <Input label="Data de Início" id="data_inicio" type="date" />
             <Input
               label="Honorário Mensal"
               id="honorario_mensal"
@@ -139,9 +141,7 @@ export default function NovaEmpresaBPOPage() {
               placeholder="1500.00"
             />
 
-            {/* Mensagens de feedback */}
-            {errorMsg && <p className="text-sm text-red-600">{errorMsg}</p>}
-            {successMsg && <p className="text-sm text-green-600">{successMsg}</p>}
+            {errorMsg && <p className="text-sm text-rose-600">{errorMsg}</p>}
 
             <div className="flex justify-end">
               <button

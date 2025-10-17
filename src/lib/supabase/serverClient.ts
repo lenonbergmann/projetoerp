@@ -1,6 +1,6 @@
-// src/lib/supabase/serverComponentClient.ts
+// src/lib/supabase/serverClient.ts
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 export function createServerComponentClient() {
   return createServerClient(

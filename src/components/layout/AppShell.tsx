@@ -2,18 +2,22 @@
 "use client";
 
 import * as React from "react";
-// import Link from "next/link"; // ⛔ removido, não é usado aqui
 import { useRouter, usePathname } from "next/navigation";
+import Image from "next/image";
 import { Sidebar } from "./Sidebar";
 import UserMenu from "./UserMenu";
 import { createClientComponentClient } from "@/lib/supabase/clientComponentClient";
 import type { User, AuthChangeEvent, Session } from "@supabase/supabase-js";
 
-/* ----------------------------- helpers ----------------------------- */
+/* ============================== Helpers ============================== */
 function getCookie(name: string) {
   if (typeof document === "undefined") return null;
-  const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
-  return match ? decodeURIComponent(match[2]) : null;
+  const cookies = document.cookie ? document.cookie.split("; ") : [];
+  for (const c of cookies) {
+    const [k, ...rest] = c.split("=");
+    if (k === name) return decodeURIComponent(rest.join("="));
+  }
+  return null;
 }
 
 function nameFromEmail(email?: string | null) {
@@ -29,16 +33,12 @@ function nameFromEmail(email?: string | null) {
 function formatCpfCnpj(raw?: string | null) {
   if (!raw) return "";
   const digits = (raw.match(/\d/g) || []).join("");
-  if (digits.length === 11) {
-    return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-  }
-  if (digits.length === 14) {
-    return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
-  }
-  return raw; // mantém como veio se tamanho desconhecido
+  if (digits.length === 11) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  if (digits.length === 14) return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+  return raw;
 }
 
-/* ------------------------------ types ------------------------------ */
+/* ================================ Types =============================== */
 type EmpresaInfo = {
   nome_fantasia: string | null;
   razao_social: string | null;
@@ -46,11 +46,25 @@ type EmpresaInfo = {
   logo_url: string | null;
 };
 
-/* ---------------------------- componente --------------------------- */
+/* ============================= AppShell ============================== */
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = React.useState(false);
-  const [user, setUser] = React.useState<User | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const supabase = React.useMemo(() => createClientComponentClient(), []);
 
+  const HIDE_SHELL_PATHS = React.useMemo(() => ["/login"], []);
+  const hideChrome = React.useMemo(
+    () => HIDE_SHELL_PATHS.some((p) => (pathname || "").startsWith(p)),
+    [HIDE_SHELL_PATHS, pathname]
+  );
+
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+
+  // Auth state
+  const [user, setUser] = React.useState<User | null>(null);
+  const [authChecked, setAuthChecked] = React.useState(false);
+
+  // Empresa state
   const [empresaId, setEmpresaId] = React.useState<string | null>(null);
   const [empresa, setEmpresa] = React.useState<EmpresaInfo>({
     nome_fantasia: null,
@@ -59,58 +73,65 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     logo_url: null,
   });
 
-  const router = useRouter();
-  const pathname = usePathname();
-
-  // Rotas sem chrome
-  const HIDE_SHELL_PATHS = ["/login"];
-  const hideChrome = HIDE_SHELL_PATHS.some((p) => pathname?.startsWith(p));
-
-  const supabase = React.useMemo(() => createClientComponentClient(), []);
-
-  // usuário
+  /* ------------------------ Sessão do usuário ------------------------ */
   React.useEffect(() => {
     let mounted = true;
-    async function load() {
-      const { data } = await supabase.auth.getUser();
-      if (mounted) setUser(data.user ?? null);
+
+    async function bootstrap() {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+
+      const sess = data.session ?? null;
+      setUser(sess?.user ?? null);
+      setAuthChecked(true);
     }
-    load();
 
     const { data: sub } = supabase.auth.onAuthStateChange(
       (_event: AuthChangeEvent, session: Session | null) => {
         setUser(session?.user ?? null);
+        setAuthChecked(true);
       }
     );
 
+    bootstrap();
+
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe?.();
     };
   }, [supabase]);
 
-  // empresa (cookies -> supabase)
+  /* -------------------- Proteção de rotas (client-side) -------------------- */
   React.useEffect(() => {
+    if (!authChecked) return;
+    // se não logado e a rota não é pública, vá para login
+    const isPublic = HIDE_SHELL_PATHS.some((p) => (pathname || "").startsWith(p));
+    if (!user && !isPublic) router.replace("/login");
+  }, [authChecked, user, pathname, HIDE_SHELL_PATHS, router]);
+
+  /* ----------------------- Empresa (cookies + DB) ---------------------- */
+  React.useEffect(() => {
+    // Lê cookies no client (após hidratar)
     const id = getCookie("empresaId");
     setEmpresaId(id);
 
-    const nomeCookie =
-      getCookie("empresaNomeFantasia") || getCookie("empresaNome") || null;
-    const razaoCookie = getCookie("empresaRazaoSocial");
-    const cpfCnpjCookie = getCookie("empresaCpfCnpj");
-    const logoCookie = getCookie("empresaLogoUrl");
+    const nome = getCookie("empresaNomeFantasia") || getCookie("empresaNome") || null;
+    const razao = getCookie("empresaRazaoSocial");
+    const doc = getCookie("empresaCpfCnpj");
+    const logo = getCookie("empresaLogoUrl");
 
-    if (nomeCookie || razaoCookie || cpfCnpjCookie || logoCookie) {
+    // Pré-hidrata com cookies (evita “salto” visual)
+    if (nome || razao || doc || logo) {
       setEmpresa({
-        nome_fantasia: nomeCookie,
-        razao_social: razaoCookie,
-        cpf_cnpj: cpfCnpjCookie,
-        logo_url: logoCookie,
+        nome_fantasia: nome,
+        razao_social: razao,
+        cpf_cnpj: doc,
+        logo_url: logo,
       });
     }
 
-    // faltou algo? busca no banco (por id OU codigo_erp)
-    if (id && (!nomeCookie || !razaoCookie || !cpfCnpjCookie || !logoCookie)) {
+    // Busca no banco se faltar algo essencial
+    if (id && (!nome || !razao || !doc || !logo)) {
       fetchEmpresaRobusta(supabase, id)
         .then((db) => {
           if (!db) return;
@@ -127,36 +148,49 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [pathname, supabase]);
 
-  // nome do usuário (nunca e-mail)
-  const displayName =
-    (user?.user_metadata as any)?.full_name ||
-    (user?.user_metadata as any)?.name ||
-    (user?.user_metadata as any)?.user_name ||
-    nameFromEmail(user?.email);
+  /* --------------------- Computados de exibição ---------------------- */
+  const displayName = React.useMemo(() => {
+    const md = (user?.user_metadata || {}) as Record<string, any>;
+    return md.full_name || md.name || md.user_name || nameFromEmail(user?.email);
+  }, [user]);
 
-  const avatarUrl =
-    (user?.user_metadata as any)?.avatar_url ||
-    (user?.user_metadata as any)?.picture ||
-    null;
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push("/login");
-  };
-
-  const handleTrocarEmpresa = () => {
-    router.push("/selecionar-empresa");
-  };
-
-  if (hideChrome) {
-    return <>{children}</>;
-  }
+  const avatarUrl = React.useMemo(() => {
+    const md = (user?.user_metadata || {}) as Record<string, any>;
+    return md.avatar_url || md.picture || null;
+  }, [user]);
 
   const nomeFantasia =
     empresa.nome_fantasia ?? (empresaId ? `Empresa ${empresaId}` : "Nenhuma selecionada");
   const razaoSocial = empresa.razao_social ?? "";
   const cpfCnpjFmt = formatCpfCnpj(empresa.cpf_cnpj);
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.replace("/login");
+  };
+
+  const handleTrocarEmpresa = () => {
+    router.push("/selecionar-empresa");
+  };
+
+  /* ------------------- Sem chrome nas rotas públicas ------------------ */
+  if (hideChrome) return <>{children}</>;
+
+  /* ------------------------- Placeholder seguro ----------------------- */
+  // Evita flash indesejado enquanto verifica a auth
+  if (!authChecked) {
+    return (
+      <div className="min-h-dvh bg-white text-gray-900">
+        <div className="flex h-14 items-center border-b px-4 md:px-6" />
+        <main className="mx-auto max-w-[1600px] px-3 py-4 md:px-6 md:py-6">
+          <div className="h-6 w-40 animate-pulse rounded bg-gray-200" />
+          <div className="mt-4 h-4 w-96 animate-pulse rounded bg-gray-200" />
+        </main>
+      </div>
+    );
+  }
+
+  /* =============================== UI ================================ */
   return (
     <div className="flex min-h-dvh">
       {/* Sidebar desktop */}
@@ -164,25 +198,38 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar />
       </div>
 
-      {/* Drawer mobile */}
-      <div className={["fixed inset-0 z-40 md:hidden transition", open ? "visible" : "invisible"].join(" ")}>
-        <div
-          className={["absolute inset-0 bg-black/40 transition-opacity", open ? "opacity-100" : "opacity-0"].join(" ")}
-          onClick={() => setOpen(false)}
-        />
+      {/* Drawer mobile (acessível) */}
+      <div
+        className={[
+          "fixed inset-0 z-40 md:hidden transition",
+          drawerOpen ? "visible" : "invisible",
+        ].join(" ")}
+        aria-hidden={!drawerOpen}
+      >
         <div
           className={[
-            "absolute inset-y-0 left-0 w-72 bg-white border-r shadow-xl transition-transform",
-            open ? "translate-x-0" : "-translate-x-full",
+            "absolute inset-0 bg-black/40 transition-opacity",
+            drawerOpen ? "opacity-100" : "opacity-0",
           ].join(" ")}
+          onClick={() => setDrawerOpen(false)}
+        />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menu"
+          className={[
+            "absolute inset-y-0 left-0 w-72 bg-white border-r shadow-xl transition-transform outline-none",
+            drawerOpen ? "translate-x-0" : "-translate-x-full",
+          ].join(" ")}
+          tabIndex={-1}
         >
-          <Sidebar onNavigate={() => setOpen(false)} />
+          <Sidebar onNavigate={() => setDrawerOpen(false)} />
         </div>
       </div>
 
-      {/* Main */}
+      {/* Main area */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Header FIXO com 3 regiões: esquerda (menu mobile), centro (empresa), direita (usuário) */}
+        {/* Header fixo */}
         <header
           className="
             sticky top-0 z-50
@@ -192,33 +239,35 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             md:px-6
           "
         >
-          {/* Esquerda: apenas o botão do menu mobile */}
+          {/* Esquerda: menu mobile */}
           <div className="flex items-center gap-3">
             <button
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border md:hidden"
-              onClick={() => setOpen(true)}
+              onClick={() => setDrawerOpen(true)}
               aria-label="Abrir menu"
             >
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
                 <path d="M3 6h18M3 12h18M3 18h18" strokeWidth="2" strokeLinecap="round" />
               </svg>
             </button>
           </div>
 
-          {/* Centro: BLOCO CENTRALIZADO com logo + textos + botão Alterar */}
+          {/* Centro: empresa (logo + textos + botão Alterar) */}
           <div className="justify-self-center">
             <div className="flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3 py-2">
-              {/* logo */}
-              <div className="flex h-10 w-10 md:h-14 md:w-14 items-center justify-center overflow-hidden rounded-md border bg-white">
+              {/* Logo com next/image (container relativo para fill) */}
+              <div className="relative h-10 w-10 md:h-14 md:w-14 overflow-hidden rounded-md border bg-white">
                 {empresa.logo_url ? (
-                  <img
+                  <Image
                     src={empresa.logo_url}
                     alt="Logo da empresa"
-                    className="h-full w-full object-contain"
-                    referrerPolicy="no-referrer"
+                    fill
+                    sizes="56px" // ~ h/w em md
+                    className="object-contain"
+                    priority={false}
                   />
                 ) : (
-                  <svg className="h-5 w-5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <svg className="h-full w-full p-2 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
                     <rect x="3" y="7" width="18" height="13" rx="2" strokeWidth="2" />
                     <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" strokeWidth="2" />
                   </svg>
@@ -231,9 +280,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   {nomeFantasia}
                 </div>
                 {razaoSocial ? (
-                  <div className="max-w-[48ch] truncate text-xs text-indigo-800/90">
-                    {razaoSocial}
-                  </div>
+                  <div className="max-w-[48ch] truncate text-xs text-indigo-800/90">{razaoSocial}</div>
                 ) : null}
                 <div className="text-[11px] leading-none text-indigo-700/80">
                   {cpfCnpjFmt || "CPF/CNPJ não informado"}
@@ -246,7 +293,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 onClick={handleTrocarEmpresa}
                 title="Trocar empresa"
               >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
                   <path d="M4 7h11M10 17H21" strokeWidth="2" strokeLinecap="round" />
                   <path d="M7 4l-3 3 3 3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   <path d="M17 14l3 3-3 3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -257,11 +304,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* Direita: usuário */}
-          <UserMenu
-            name={displayName}
-            avatarUrl={avatarUrl}
-            onLogout={handleLogout}
-          />
+          <UserMenu name={displayName} avatarUrl={avatarUrl} onLogout={handleLogout} />
         </header>
 
         <main className="min-w-0 flex-1 bg-gray-50/50">
@@ -272,31 +315,38 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/* ------------------------- data fetch (robusto) ------------------------- */
+/* ============================ Data fetch ============================ */
 /**
- * Tenta buscar a empresa por `id`; se não achar, tenta por `codigo_erp`.
- * Ajuste os nomes das colunas se seu schema divergir.
+ * Busca a empresa priorizando `codigo_erp`. Se não achar, tenta `id`.
+ * Ajuste os nomes de colunas se seu schema divergir.
  */
 async function fetchEmpresaRobusta(
   supabase: ReturnType<typeof createClientComponentClient>,
   empresaId: string
 ): Promise<EmpresaInfo | null> {
-  // 1) tenta por id
-  let { data, error } = await supabase
+  // Tenta interpretar empresaId como number para codigo_erp (se aplicável)
+  const asNumber = Number(empresaId);
+  const isNumeric = Number.isFinite(asNumber);
+
+  // 1) por codigo_erp (preferencial para seu schema)
+  if (isNumeric) {
+    const { data, error } = await supabase
+      .from("empresas_bpo")
+      .select("nome_fantasia, razao_social, cpf_cnpj, logo_url")
+      .eq("codigo_erp", asNumber)
+      .maybeSingle();
+
+    if (!error && data) return data as EmpresaInfo;
+  }
+
+  // 2) por id (caso exista essa PK na sua tabela)
+  const { data, error } = await supabase
     .from("empresas_bpo")
     .select("nome_fantasia, razao_social, cpf_cnpj, logo_url")
     .eq("id", empresaId)
     .maybeSingle();
 
-  // 2) se não veio, tenta por codigo_erp
-  if ((error || !data) && empresaId) {
-    const res = await supabase
-      .from("empresas_bpo")
-      .select("nome_fantasia, razao_social, cpf_cnpj, logo_url")
-      .eq("codigo_erp", empresaId)
-      .maybeSingle();
-    data = res.data as any;
-  }
+  if (!error && data) return data as EmpresaInfo;
 
-  return (data as any) ?? null;
+  return null;
 }

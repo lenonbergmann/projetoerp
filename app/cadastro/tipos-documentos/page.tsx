@@ -4,12 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@/lib/supabase/clientComponentClient";
-import {
-  Loader2,
-  Plus,
-  Search,
-  ChevronDown,
-} from "lucide-react";
+import { Loader2, Plus, Search, ChevronDown } from "lucide-react";
 
 // Export libs
 import * as XLSX from "xlsx";
@@ -24,15 +19,88 @@ export type TipoDocumento = {
   created_at?: string;
 };
 
+type StatusFilter = "all" | "active" | "inactive";
+
 const LOGO_URL =
   "https://jhjwxjixgjhueyupkvoz.supabase.co/storage/v1/object/public/logos-empresas/projetoBPOlogo.png";
 
+/* =============== Toggle 3D reutilizável =============== */
+type Toggle3DProps = {
+  active: boolean;          // true = Ativo (verde/direita)
+  disabled?: boolean;
+  onClick: () => void;
+  ariaLabel?: string;
+  scale?: number;           // ex.: 1.3 = +30%
+};
+function Toggle3D({ active, disabled, onClick, ariaLabel, scale = 1 }: Toggle3DProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      aria-label={ariaLabel ?? (active ? "Ativo" : "Inativo")}
+      className={[
+        "relative inline-flex h-9 items-center rounded-full border transition-colors duration-200",
+        "bg-gradient-to-b",
+        active
+          ? "from-emerald-200 to-emerald-300 border-emerald-400"
+          : "from-gray-100 to-gray-200 border-gray-300",
+        "shadow-md",
+        active ? "shadow-emerald-200/60" : "shadow-gray-300/60",
+        disabled ? "opacity-60 cursor-not-allowed" : "hover:shadow-lg"
+      ].join(" ")}
+      style={{
+        width: 72,
+        transform: `scale(${scale})`,
+        transformOrigin: "left center",
+      }}
+      title={active ? "Ativo — clique para desativar" : "Inativo — clique para ativar"}
+    >
+      {/* trilho/“inset” */}
+      <span
+        aria-hidden
+        className={[
+          "absolute inset-0 rounded-full shadow-inner",
+          active ? "shadow-emerald-600/10" : "shadow-black/10"
+        ].join(" ")}
+      />
+      {/* knob */}
+      <span
+        aria-hidden
+        className={[
+          "relative z-10 h-7 w-7 rounded-full bg-white",
+          "transition-transform duration-200",
+          "shadow-[0_2px_0_#0000000a,0_6px_12px_#0000001a]",
+          "border border-black/5"
+        ].join(" ")}
+        style={{ transform: active ? "translateX(39px)" : "translateX(6px)" }}
+      />
+      {/* ring suave */}
+      <span
+        aria-hidden
+        className={[
+          "absolute inset-0 rounded-full pointer-events-none",
+          active ? "ring-1 ring-emerald-700/20" : "ring-1 ring-black/10"
+        ].join(" ")}
+      />
+      <span className="sr-only">{active ? "Ativo" : "Inativo"}</span>
+    </button>
+  );
+}
+
 export default function TiposDocumentosPage() {
   const supabase = createClientComponentClient();
+
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [itens, setItens] = useState<TipoDocumento[]>([]);
   const [q, setQ] = useState("");
+
+  // filtro de status (aplicado no SELECT)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+
+  // saving por linha
   const [savingId, setSavingId] = useState<string | number | null>(null);
 
   // Export states
@@ -41,31 +109,14 @@ export default function TiposDocumentosPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const exportRef = useRef<HTMLDivElement | null>(null);
 
-  async function fetchData() {
-    setLoading(true);
-    setErrorMsg(null);
-
-    const { data, error } = await supabase
-      .from("tipos_documento") // <- confirme esse nome se necessário
-      .select("id, codigo, descricao, ativo, created_at")
-      .order("descricao", { ascending: true });
-
-    if (error) {
-      console.error("SELECT tipos_documento error:", error);
-      setErrorMsg(error.message);
-      setItens([]);
-    } else {
-      setItens((data || []) as TipoDocumento[]);
-    }
-    setLoading(false);
-  }
-
+  // debounce de busca
+  const [debouncedQ, setDebouncedQ] = useState("");
   useEffect(() => {
-    fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
-  // Fecha dropdown de export ao clicar fora / ESC
+  // fechar dropdown export ao clicar fora / ESC
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!exportRef.current) return;
@@ -82,32 +133,60 @@ export default function TiposDocumentosPage() {
     };
   }, []);
 
+  async function fetchData() {
+    setLoading(true);
+    setErrorMsg(null);
+
+    let query = supabase
+      .from("tipos_documento")
+      .select("id, codigo, descricao, ativo, created_at")
+      .order("descricao", { ascending: true });
+
+    if (debouncedQ) {
+      const pat = `%${debouncedQ.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+      query = query.or(`codigo.ilike.${pat},descricao.ilike.${pat}`);
+    }
+
+    if (statusFilter === "active") {
+      query = query.eq("ativo", true);
+    } else if (statusFilter === "inactive") {
+      query = query.eq("ativo", false);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("SELECT tipos_documento error:", error);
+      setErrorMsg(error.message);
+      setItens([]);
+    } else {
+      setItens((data || []) as TipoDocumento[]);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ, statusFilter]);
+
   const filtrados = useMemo(() => {
-    if (!q) return itens;
-    const t = q.toLowerCase();
+    if (!debouncedQ) return itens;
+    const t = debouncedQ.toLowerCase();
     return itens.filter(
-      (i) =>
-        (i.codigo || "").toLowerCase().includes(t) ||
-        i.descricao.toLowerCase().includes(t)
+      (i) => (i.codigo || "").toLowerCase().includes(t) || i.descricao.toLowerCase().includes(t)
     );
-  }, [itens, q]);
+  }, [itens, debouncedQ]);
 
   async function toggleAtivo(id: string | number, valorAtual: boolean) {
     setSavingId(id);
-    setItens((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, ativo: !valorAtual } : i))
-    );
+    setItens((prev) => prev.map((i) => (i.id === id ? { ...i, ativo: !valorAtual } : i)));
 
-    const { error } = await supabase
-      .from("tipos_documento")
-      .update({ ativo: !valorAtual })
-      .eq("id", id);
+    const { error } = await supabase.from("tipos_documento").update({ ativo: !valorAtual }).eq("id", id);
 
     if (error) {
       console.error("UPDATE tipos_documento error:", error);
-      setItens((prev) =>
-        prev.map((i) => (i.id === id ? { ...i, ativo: valorAtual } : i))
-      );
+      setItens((prev) => prev.map((i) => (i.id === id ? { ...i, ativo: valorAtual } : i)));
       alert("Não foi possível alterar o status. Tente novamente.");
     }
     setSavingId(null);
@@ -138,27 +217,20 @@ export default function TiposDocumentosPage() {
     }
   }
 
-  // ------- Exportações -------
+  // ------- Exportações (exporta os itens filtrados na tela) -------
   async function handleExportXLSX() {
     try {
       setExportError(null);
       setExporting(true);
-      const rows = filtrados; // exporta o que está filtrado na tela
+      const rows = filtrados;
       const wsData = [
         ["Código", "Descrição", "Status"],
-        ...rows.map((r) => [
-          r.codigo ?? "",
-          r.descricao ?? "",
-          r.ativo ? "Ativo" : "Inativo",
-        ]),
+        ...rows.map((r) => [r.codigo ?? "", r.descricao ?? "", r.ativo ? "Ativo" : "Inativo"]),
       ];
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.aoa_to_sheet(wsData);
       XLSX.utils.book_append_sheet(wb, ws, "TiposDocumentos");
-      XLSX.writeFile(
-        wb,
-        `tipos_documentos_${new Date().toISOString().slice(0, 10)}.xlsx`
-      );
+      XLSX.writeFile(wb, `tipos_documentos_${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch (e: any) {
       setExportError(e?.message || String(e));
     } finally {
@@ -183,9 +255,7 @@ export default function TiposDocumentosPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `tipos_documentos_${new Date()
-        .toISOString()
-        .slice(0, 10)}.csv`;
+      a.download = `tipos_documentos_${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -210,32 +280,24 @@ export default function TiposDocumentosPage() {
       try {
         const dataUrl = await getLogoDataUrl();
         if (dataUrl) {
-          const x = 10;
-          const y = 8;
-          const w = 22;
-          const h = 22;
+          const x = 10, y = 8, w = 22, h = 22;
           doc.addImage(dataUrl, "PNG", x, y, w, h);
-          startY = y + h + 4; // tabela começa abaixo da logo
+          startY = y + h + 4;
         }
-      } catch {
-        // silencioso
-      }
+      } catch {}
 
-      // Tabela com cabeçalho cinza escuro
+      // Tabela
       autoTable(doc, {
-        startY,
-        head: [["Código", "Descrição", "Status"]],
-        body: rows.map((r) => [
-          r.codigo ?? "",
-          r.descricao ?? "",
-          r.ativo ? "Ativo" : "Inativo",
-        ]),
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [64, 64, 64], textColor: [255, 255, 255] },
-        theme: "grid",
-      });
+  startY,
+  head: [["Código", "Descrição", "Status"]],
+  body: rows.map((r) => [r.codigo ?? "", r.descricao ?? "", r.ativo ? "Ativo" : "Inativo"]),
+  styles: { fontSize: 8 },
+  headStyles: { fillColor: [64, 64, 64], textColor: [255, 255, 255] },
+  theme: "grid",
+});
 
-      // Data/hora no rodapé direito
+
+      // timestamp
       const pageW = doc.internal.pageSize.getWidth();
       const pageH = doc.internal.pageSize.getHeight();
       const ts = new Date().toLocaleString("pt-BR");
@@ -258,6 +320,31 @@ export default function TiposDocumentosPage() {
           <h1 className="text-2xl font-semibold">Tipos de Documentos</h1>
 
           <div className="flex items-center gap-2">
+            {/* Filtro de status */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600">Status:</label>
+              <div className="inline-flex overflow-hidden rounded-xl border bg-white">
+                <button
+                  onClick={() => setStatusFilter("all")}
+                  className={["px-3 py-1.5 text-sm", statusFilter === "all" ? "bg-gray-100 font-medium" : "hover:bg-gray-50"].join(" ")}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setStatusFilter("active")}
+                  className={["px-3 py-1.5 text-sm", statusFilter === "active" ? "bg-emerald-50 text-emerald-700 font-medium" : "hover:bg-gray-50"].join(" ")}
+                >
+                  Ativos
+                </button>
+                <button
+                  onClick={() => setStatusFilter("inactive")}
+                  className={["px-3 py-1.5 text-sm", statusFilter === "inactive" ? "bg-gray-50 text-gray-700 font-medium" : "hover:bg-gray-50"].join(" ")}
+                >
+                  Inativos
+                </button>
+              </div>
+            </div>
+
             <Link
               href="/cadastro/tipos-documentos/novo"
               className="inline-flex items-center gap-2 rounded-2xl border px-4 py-2 shadow-sm hover:shadow transition"
@@ -274,11 +361,7 @@ export default function TiposDocumentosPage() {
                 aria-haspopup="menu"
                 aria-expanded={exportOpen}
               >
-                {exporting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ChevronDown className="h-4 w-4" />
-                )}
+                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
                 Exportar
               </button>
               <div
@@ -287,34 +370,13 @@ export default function TiposDocumentosPage() {
                 }`}
                 role="menu"
               >
-                <button
-                  onClick={() => {
-                    setExportOpen(false);
-                    handleExportXLSX();
-                  }}
-                  className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
-                  role="menuitem"
-                >
+                <button onClick={() => { setExportOpen(false); handleExportXLSX(); }} className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" role="menuitem">
                   Excel (.xlsx)
                 </button>
-                <button
-                  onClick={() => {
-                    setExportOpen(false);
-                    handleExportCSV();
-                  }}
-                  className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
-                  role="menuitem"
-                >
+                <button onClick={() => { setExportOpen(false); handleExportCSV(); }} className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" role="menuitem">
                   CSV (.csv)
                 </button>
-                <button
-                  onClick={() => {
-                    setExportOpen(false);
-                    handleExportPDF();
-                  }}
-                  className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
-                  role="menuitem"
-                >
+                <button onClick={() => { setExportOpen(false); handleExportPDF(); }} className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" role="menuitem">
                   PDF (.pdf)
                 </button>
               </div>
@@ -333,16 +395,8 @@ export default function TiposDocumentosPage() {
             />
             <Search className="absolute left-3 top-2.5" size={18} />
           </div>
-          {errorMsg ? (
-            <p className="mt-2 text-sm text-rose-600">
-              Erro ao carregar: {errorMsg}
-            </p>
-          ) : null}
-          {exportError ? (
-            <p className="mt-2 text-sm text-rose-600">
-              Erro ao exportar: {exportError}
-            </p>
-          ) : null}
+          {errorMsg ? <p className="mt-2 text-sm text-rose-600">Erro ao carregar: {errorMsg}</p> : null}
+          {exportError ? <p className="mt-2 text-sm text-rose-600">Erro ao exportar: {exportError}</p> : null}
         </div>
 
         {/* Tabela */}
@@ -359,10 +413,7 @@ export default function TiposDocumentosPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td
-                    colSpan={4}
-                    className="px-4 py-10 text-center text-gray-500"
-                  >
+                  <td colSpan={4} className="px-4 py-10 text-center text-gray-500">
                     <div className="inline-flex items-center gap-2">
                       <Loader2 className="animate-spin" /> Carregando…
                     </div>
@@ -370,59 +421,42 @@ export default function TiposDocumentosPage() {
                 </tr>
               ) : filtrados.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={4}
-                    className="px-4 py-10 text-center text-gray-500"
-                  >
+                  <td colSpan={4} className="px-4 py-10 text-center text-gray-500">
                     Nenhum tipo de documento encontrado.
                   </td>
                 </tr>
               ) : (
-                filtrados.map((item) => (
-                  <tr key={item.id} className="border-t hover:bg-gray-50/60">
-                    <td className="px-4 py-3 font-mono">{item.codigo}</td>
-                    <td className="px-4 py-3">{item.descricao}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs border ${
-                          item.ativo
-                            ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                            : "bg-rose-50 border-rose-200 text-rose-700"
-                        }`}
-                      >
-                        {item.ativo ? "Ativo" : "Inativo"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <Link
-                          href={`/cadastro/tipos-documentos/${item.id}`}
-                          className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50"
-                          title="Editar"
-                        >
-                          Editar
-                        </Link>
-                        <button
-                          onClick={() => toggleAtivo(item.id, item.ativo)}
-                          className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-60"
-                          disabled={savingId === item.id}
-                          title={item.ativo ? "Desativar" : "Reativar"}
-                        >
-                          {savingId === item.id ? (
-                            <span className="inline-flex items-center gap-2">
-                              <Loader2 className="animate-spin" size={14} />{" "}
-                              Salvando…
-                            </span>
-                          ) : item.ativo ? (
-                            "Desativar"
-                          ) : (
-                            "Ativar"
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                filtrados.map((item) => {
+                  const saving = savingId === item.id;
+                  return (
+                    <tr key={item.id} className="border-t hover:bg-gray-50/60">
+                      <td className="px-4 py-3 font-mono">{item.codigo}</td>
+                      <td className="px-4 py-3">{item.descricao}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Toggle3D
+                            active={item.ativo}
+                            disabled={saving}
+                            onClick={() => toggleAtivo(item.id, item.ativo)}
+                            ariaLabel="Status do tipo de documento"
+                          />
+                          {saving && <Loader2 className="h-4 w-4 animate-spin text-gray-500" />}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="inline-flex items-center gap-2">
+                          <Link
+                            href={`/cadastro/tipos-documentos/${item.id}`}
+                            className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50"
+                            title="Editar"
+                          >
+                            Editar
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

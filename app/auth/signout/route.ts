@@ -1,4 +1,4 @@
-import { createServerComponentClient } from "@/lib/supabase/serverComponentClient"; // Importação atualizada
+import { createServerComponentClient } from "@/lib/supabase/serverClient"; // Importação atualizada
 import { NextResponse } from "next/server";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers"; // Adicionar importação de cookies
