@@ -4,10 +4,17 @@
 import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Image from "next/image";
-import { Sidebar } from "./Sidebar";
+
+// Sidebar fixa que colapsa/expande e atualiza --sidebar-width
+import SidebarRailPro from "./SidebarRailPro";
+
 import UserMenu from "./UserMenu";
 import { createClientComponentClient } from "@/lib/supabase/clientComponentClient";
 import type { User, AuthChangeEvent, Session } from "@supabase/supabase-js";
+
+// tipos/flags do menu (para passar ao SidebarRailPro)
+import type { AppRole, FeatureFlag } from "./menu";
+import { ALL_FLAGS } from "./menu";
 
 /* ============================== Helpers ============================== */
 function getCookie(name: string) {
@@ -24,7 +31,7 @@ function nameFromEmail(email?: string | null) {
   if (!email) return "Usuário";
   const base = email.split("@")[0] || "Usuário";
   return base
-    .split(/[._-]+/)
+    .split(/[._-]+/i)
     .map((p) => (p ? p[0].toUpperCase() + p.slice(1) : ""))
     .join(" ");
 }
@@ -104,14 +111,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   /* -------------------- Proteção de rotas (client-side) -------------------- */
   React.useEffect(() => {
     if (!authChecked) return;
-    // se não logado e a rota não é pública, vá para login
     const isPublic = HIDE_SHELL_PATHS.some((p) => (pathname || "").startsWith(p));
     if (!user && !isPublic) router.replace("/login");
   }, [authChecked, user, pathname, HIDE_SHELL_PATHS, router]);
 
   /* ----------------------- Empresa (cookies + DB) ---------------------- */
   React.useEffect(() => {
-    // Lê cookies no client (após hidratar)
     const id = getCookie("empresaId");
     setEmpresaId(id);
 
@@ -159,6 +164,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return md.avatar_url || md.picture || null;
   }, [user]);
 
+  // role do usuário (app_metadata > user_metadata > "convidado")
+  const role: AppRole = React.useMemo(() => {
+    const am = (user?.app_metadata || {}) as Record<string, any>;
+    const um = (user?.user_metadata || {}) as Record<string, any>;
+    return (am.role ?? um.role ?? "convidado") as AppRole;
+  }, [user]);
+
+  const enabledFlags: FeatureFlag[] = ALL_FLAGS;
+
   const nomeFantasia =
     empresa.nome_fantasia ?? (empresaId ? `Empresa ${empresaId}` : "Nenhuma selecionada");
   const razaoSocial = empresa.razao_social ?? "";
@@ -177,7 +191,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   if (hideChrome) return <>{children}</>;
 
   /* ------------------------- Placeholder seguro ----------------------- */
-  // Evita flash indesejado enquanto verifica a auth
   if (!authChecked) {
     return (
       <div className="min-h-dvh bg-white text-gray-900">
@@ -192,13 +205,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   /* =============================== UI ================================ */
   return (
-    <div className="flex min-h-dvh">
-      {/* Sidebar desktop */}
+    <div className="min-h-dvh">
+      {/* Sidebar fixa (desktop). Ela atualiza --sidebar-width (colapsada/expandida) */}
       <div className="hidden md:block">
-        <Sidebar />
+        <SidebarRailPro
+          role={role}
+          enabledFlags={enabledFlags}
+          empresaCodigoERP={empresaId}
+          topOffset={90}        // altura do header para não sobrepor
+          railGutter={12}       // “gutter” quando o texto colapsa atrás do ícone
+          collapsedWidth={64}   // largura só de ícones
+          expandWidth={300}     // largura expandida
+          defaultExpanded        // começa expandida (estilo ChatGPT)
+        />
       </div>
 
-      {/* Drawer mobile (acessível) */}
+      {/* Drawer mobile (overlay) */}
       <div
         className={[
           "fixed inset-0 z-40 md:hidden transition",
@@ -223,13 +245,26 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           ].join(" ")}
           tabIndex={-1}
         >
-          <Sidebar onNavigate={() => setDrawerOpen(false)} />
+          <SidebarRailPro
+            role={role}
+            enabledFlags={enabledFlags}
+            empresaCodigoERP={empresaId}
+            onNavigate={() => setDrawerOpen(false)}
+            // no mobile, pode manter os defaults internos
+          />
         </div>
       </div>
 
-      {/* Main area */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Header fixo */}
+      {/* Wrapper que EMPURRA Header + Main (igual ChatGPT) */}
+      <div
+        className="
+          flex min-h-dvh flex-col
+          ml-0 md:ml-[var(--sidebar-width,64px)]
+          transition-[margin] md:transition-[margin]
+          duration-200 ease-out
+        "
+      >
+        {/* Header fixo (também empurrado) */}
         <header
           className="
             sticky top-0 z-50
@@ -255,14 +290,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {/* Centro: empresa (logo + textos + botão Alterar) */}
           <div className="justify-self-center">
             <div className="flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3 py-2">
-              {/* Logo com next/image (container relativo para fill) */}
+              {/* Logo */}
               <div className="relative h-10 w-10 md:h-14 md:w-14 overflow-hidden rounded-md border bg-white">
                 {empresa.logo_url ? (
                   <Image
                     src={empresa.logo_url}
                     alt="Logo da empresa"
                     fill
-                    sizes="56px" // ~ h/w em md
+                    sizes="56px"
                     className="object-contain"
                     priority={false}
                   />
@@ -274,7 +309,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 )}
               </div>
 
-              {/* textos centralizados */}
+              {/* textos */}
               <div className="flex min-w-0 flex-col items-center text-center">
                 <div className="max-w-[44ch] truncate text-sm font-bold text-indigo-900">
                   {nomeFantasia}
@@ -307,6 +342,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <UserMenu name={displayName} avatarUrl={avatarUrl} onLogout={handleLogout} />
         </header>
 
+        {/* Conteúdo */}
         <main className="min-w-0 flex-1 bg-gray-50/50">
           <div className="mx-auto max-w-[1600px] px-3 py-4 md:px-6 md:py-6">{children}</div>
         </main>
@@ -316,19 +352,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 /* ============================ Data fetch ============================ */
-/**
- * Busca a empresa priorizando `codigo_erp`. Se não achar, tenta `id`.
- * Ajuste os nomes de colunas se seu schema divergir.
- */
 async function fetchEmpresaRobusta(
   supabase: ReturnType<typeof createClientComponentClient>,
   empresaId: string
 ): Promise<EmpresaInfo | null> {
-  // Tenta interpretar empresaId como number para codigo_erp (se aplicável)
   const asNumber = Number(empresaId);
   const isNumeric = Number.isFinite(asNumber);
 
-  // 1) por codigo_erp (preferencial para seu schema)
   if (isNumeric) {
     const { data, error } = await supabase
       .from("empresas_bpo")
@@ -339,7 +369,6 @@ async function fetchEmpresaRobusta(
     if (!error && data) return data as EmpresaInfo;
   }
 
-  // 2) por id (caso exista essa PK na sua tabela)
   const { data, error } = await supabase
     .from("empresas_bpo")
     .select("nome_fantasia, razao_social, cpf_cnpj, logo_url")

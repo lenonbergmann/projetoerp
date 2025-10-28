@@ -2,8 +2,9 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { ThemeProvider } from "@/components/theme-provider"; // ✅ importar
 import AppShell from "@/components/layout/AppShell";
+import { ThemeProvider } from "next-themes";
+import { Toaster } from "sonner";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"], display: "swap" });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], display: "swap" });
@@ -49,15 +50,22 @@ export const viewport: Viewport = {
   colorScheme: "light dark",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+type RootLayoutProps = { children: React.ReactNode };
+
+export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    // ✅ mover suppressHydrationWarning para o <html>
     <html lang="pt-BR" dir="ltr" suppressHydrationWarning>
-      {/* ✅ use tokens do shadcn: bg-background / text-foreground */}
-      <body className={`${geistSans.variable} ${geistMono.variable} min-h-dvh bg-background text-foreground antialiased`}>
-        {/* ✅ envolver a app com ThemeProvider */}
+      {/* 
+        - use tokens do shadcn (bg-background/text-foreground)
+        - não ler nada do window aqui
+      */}
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} min-h-dvh bg-background text-foreground antialiased`}
+        suppressHydrationWarning
+      >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <AppShell>{children}</AppShell>
+          <Toaster richColors position="top-right" />
         </ThemeProvider>
       </body>
     </html>
