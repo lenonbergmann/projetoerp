@@ -33,6 +33,7 @@ export function withQuery(
 /** Padrões (regex) de rotas dinâmicas que precisamos reconhecer. */
 const ROUTE_PATTERNS = {
   dashboard: /^\/dashboard\/([^/]+)$/,
+  clientesBpo: /^\/cadastro\/clientes-bpo\/([^/]+)$/, // /cadastro/clientes-bpo/:codigo_erp
 } as const;
 
 /** Define as rotas estáticas e os geradores dinâmicos (builders). */
@@ -45,21 +46,36 @@ export const routes = {
   /** Rota dinâmica do dashboard. Aceita string ou number. */
   dashboard: (empresaId: string | number): DashboardRoute =>
     (`/dashboard/${String(empresaId)}` as const),
+
+  /** Cadastros – Clientes BPO */
+  cadastrosRoot: "/cadastro" as const,                         // opcional, útil p/ menu/sitemap
+  clientesBpoRoot: "/cadastro/clientes-bpo" as const,          // listagem
+  clientesBpoNovo: "/cadastro/clientes-bpo/novo" as const,     // criação
+  clientesBpo: (codigoErp: string | number): ClientesBpoRoute =>
+    (`/cadastro/clientes-bpo/${String(codigoErp)}` as const),  // edição
 } as const;
 
 /* ============================== Tipagens ============================== */
 
 /** Chaves das rotas estáticas (derivado do objeto acima). */
-type StaticRouteKeys = "home" | "login" | "selecionarEmpresa" | "dashboardRoot";
+type StaticRouteKeys =
+  | "home"
+  | "login"
+  | "selecionarEmpresa"
+  | "dashboardRoot"
+  | "cadastrosRoot"
+  | "clientesBpoRoot"
+  | "clientesBpoNovo";
 
 /** Conjunto de rotas estáticas conhecidas. */
 export type KnownStaticRoutes = typeof routes[StaticRouteKeys];
 
-/** Template literal para rota dinâmica de dashboard. */
+/** Template literal para rotas dinâmicas. */
 export type DashboardRoute = `/dashboard/${string}`;
+export type ClientesBpoRoute = `/cadastro/clientes-bpo/${string}`;
 
 /** União de todas as rotas válidas. */
-export type AppRoutes = KnownStaticRoutes | DashboardRoute;
+export type AppRoutes = KnownStaticRoutes | DashboardRoute | ClientesBpoRoute;
 
 /* ============================== Predicados ============================ */
 
@@ -70,7 +86,10 @@ export function isKnownStaticRoute(path: string): path is KnownStaticRoutes {
     p === routes.home ||
     p === routes.login ||
     p === routes.selecionarEmpresa ||
-    p === routes.dashboardRoot
+    p === routes.dashboardRoot ||
+    p === routes.cadastrosRoot ||
+    p === routes.clientesBpoRoot ||
+    p === routes.clientesBpoNovo
   );
 }
 
@@ -79,9 +98,14 @@ export function isDashboardRoute(path: string): path is DashboardRoute {
   return ROUTE_PATTERNS.dashboard.test(normalizePath(path));
 }
 
+/** Checa se o path é uma rota de clientes-bpo válida (/cadastro/clientes-bpo/:codigo_erp). */
+export function isClientesBpoRoute(path: string): path is ClientesBpoRoute {
+  return ROUTE_PATTERNS.clientesBpo.test(normalizePath(path));
+}
+
 /** Checa se o path é uma AppRoute válida (estática ou dinâmica). */
 export function isAppRoute(path: string): path is AppRoutes {
-  return isKnownStaticRoute(path) || isDashboardRoute(path);
+  return isKnownStaticRoute(path) || isDashboardRoute(path) || isClientesBpoRoute(path);
 }
 
 /* ============================== Extractors ============================ */
@@ -93,11 +117,29 @@ export function getEmpresaIdFromPath(path: string): string | null {
   return m ? m[1] : null;
 }
 
+/** Tenta extrair o codigo_erp de /cadastro/clientes-bpo/:codigo_erp. Retorna null se não casar. */
+export function getCodigoErpFromPath(path: string): string | null {
+  const p = normalizePath(path);
+  const m = ROUTE_PATTERNS.clientesBpo.exec(p);
+  return m ? m[1] : null;
+}
+
 /** Versão "segura": lança erro se não for uma rota de dashboard válida. */
 export function requireEmpresaId(path: string): string {
   const id = getEmpresaIdFromPath(path);
   if (!id) {
     throw new Error(`Path "${path}" não é uma rota válida de dashboard (/dashboard/:empresaId).`);
+  }
+  return id;
+}
+
+/** Versão "segura": lança erro se não for uma rota de clientes-bpo válida. */
+export function requireCodigoErp(path: string): string {
+  const id = getCodigoErpFromPath(path);
+  if (!id) {
+    throw new Error(
+      `Path "${path}" não é uma rota válida de clientes-bpo (/cadastro/clientes-bpo/:codigo_erp).`
+    );
   }
   return id;
 }
@@ -112,13 +154,12 @@ export function dashboardUrl(
   return withQuery(routes.dashboard(empresaId), query);
 }
 
-/** Garante que qualquer string que represente rota vire uma AppRoute tipada (ou lança). */
-export function assertAppRoute(path: string): AppRoutes {
-  const p = normalizePath(path);
-  if (!isAppRoute(p)) {
-    throw new Error(`Path "${path}" não corresponde a nenhuma AppRoute conhecida.`);
-  }
-  return p;
+/** Atalho para construir rota de edição de cliente BPO com query params opcionais. */
+export function clientesBpoUrl(
+  codigoErp: string | number,
+  query?: Record<string, string | number | boolean | null | undefined>
+): string {
+  return withQuery(routes.clientesBpo(codigoErp), query);
 }
 
 /* ============================== Conveniências ========================= */
@@ -129,6 +170,9 @@ export const STATIC_ROUTES: KnownStaticRoutes[] = [
   routes.login,
   routes.selecionarEmpresa,
   routes.dashboardRoot,
+  routes.cadastrosRoot,
+  routes.clientesBpoRoot,
+  routes.clientesBpoNovo,
 ];
 
 /** Alias em CAPS (opcional, caso goste desse estilo). */
