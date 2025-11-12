@@ -5,26 +5,36 @@ import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Image from "next/image";
 
-// Sidebar fixa que colapsa/expande e atualiza --sidebar-width
 import SidebarRailPro from "./SidebarRailPro";
-
 import UserMenu from "./UserMenu";
+
 import { createClientComponentClient } from "@/lib/supabase/clientComponentClient";
 import type { User, AuthChangeEvent, Session } from "@supabase/supabase-js";
 
-// tipos/flags do menu (para passar ao SidebarRailPro)
 import type { AppRole, FeatureFlag } from "./menu";
 import { ALL_FLAGS } from "./menu";
 
+/* ============================== Constantes ============================== */
+const HIDE_SHELL_PATHS = ["/login"] as const;
+
+const SHELL_SKELETON = (
+  <div className="min-h-dvh bg-white text-gray-900">
+    <div className="flex h-14 items-center border-b px-4 md:px-6" />
+    <main className="mx-auto max-w-[1600px] px-3 py-4 md:px-6 md:py-6">
+      <div className="h-6 w-40 animate-pulse rounded bg-gray-200" />
+      <div className="mt-4 h-4 w-96 animate-pulse rounded bg-gray-200" />
+    </main>
+  </div>
+);
+
 /* ============================== Helpers ============================== */
-function getCookie(name: string) {
+function safeGetCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
-  const cookies = document.cookie ? document.cookie.split("; ") : [];
-  for (const c of cookies) {
-    const [k, ...rest] = c.split("=");
-    if (k === name) return decodeURIComponent(rest.join("="));
-  }
-  return null;
+  // busca precisa; evita colisões com prefixos
+  const m = document.cookie.match(
+    new RegExp(`(?:^|; )${name.replace(/[-[\]/{}()*+?.\\^$|]/g, "\\$&")}=([^;]*)`)
+  );
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
 function nameFromEmail(email?: string | null) {
@@ -40,8 +50,10 @@ function nameFromEmail(email?: string | null) {
 function formatCpfCnpj(raw?: string | null) {
   if (!raw) return "";
   const digits = (raw.match(/\d/g) || []).join("");
-  if (digits.length === 11) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-  if (digits.length === 14) return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+  if (digits.length === 11)
+    return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  if (digits.length === 14)
+    return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
   return raw;
 }
 
@@ -57,12 +69,13 @@ type EmpresaInfo = {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+
+  // instancia única do supabase por sessão do componente
   const supabase = React.useMemo(() => createClientComponentClient(), []);
 
-  const HIDE_SHELL_PATHS = React.useMemo(() => ["/login"], []);
   const hideChrome = React.useMemo(
     () => HIDE_SHELL_PATHS.some((p) => (pathname || "").startsWith(p)),
-    [HIDE_SHELL_PATHS, pathname]
+    [pathname]
   );
 
   const [drawerOpen, setDrawerOpen] = React.useState(false);
@@ -85,12 +98,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     async function bootstrap() {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-
-      const sess = data.session ?? null;
-      setUser(sess?.user ?? null);
-      setAuthChecked(true);
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!mounted) return;
+        const sess = data.session ?? null;
+        setUser(sess?.user ?? null);
+      } finally {
+        if (mounted) setAuthChecked(true);
+      }
     }
 
     const { data: sub } = supabase.auth.onAuthStateChange(
@@ -113,19 +128,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!authChecked) return;
     const isPublic = HIDE_SHELL_PATHS.some((p) => (pathname || "").startsWith(p));
     if (!user && !isPublic) router.replace("/login");
-  }, [authChecked, user, pathname, HIDE_SHELL_PATHS, router]);
+  }, [authChecked, user, pathname, router]);
 
   /* ----------------------- Empresa (cookies + DB) ---------------------- */
   React.useEffect(() => {
-    const id = getCookie("empresaId");
+    let mounted = true;
+
+    // Lê cookies UMA vez ao montar / trocar rota (para evitar flicker)
+    const id = safeGetCookie("empresaId");
+    const nome = safeGetCookie("empresaNomeFantasia") || safeGetCookie("empresaNome") || null;
+    const razao = safeGetCookie("empresaRazaoSocial");
+    const doc = safeGetCookie("empresaCpfCnpj");
+    const logo = safeGetCookie("empresaLogoUrl");
+
     setEmpresaId(id);
 
-    const nome = getCookie("empresaNomeFantasia") || getCookie("empresaNome") || null;
-    const razao = getCookie("empresaRazaoSocial");
-    const doc = getCookie("empresaCpfCnpj");
-    const logo = getCookie("empresaLogoUrl");
-
-    // Pré-hidrata com cookies (evita “salto” visual)
+    // Pré-hidrata com cookies para evitar “salto” visual
     if (nome || razao || doc || logo) {
       setEmpresa({
         nome_fantasia: nome,
@@ -135,22 +153,25 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       });
     }
 
-    // Busca no banco se faltar algo essencial
-    if (id && (!nome || !razao || !doc || !logo)) {
-      fetchEmpresaRobusta(supabase, id)
-        .then((db) => {
-          if (!db) return;
-          setEmpresa((prev) => ({
-            nome_fantasia: db.nome_fantasia ?? prev.nome_fantasia,
-            razao_social: db.razao_social ?? prev.razao_social,
-            cpf_cnpj: db.cpf_cnpj ?? prev.cpf_cnpj,
-            logo_url: db.logo_url ?? prev.logo_url,
-          }));
-        })
-        .catch(() => {
-          /* silencioso */
-        });
-    }
+    // Busca complementar no DB se faltar algo essencial
+    (async () => {
+      if (!id) return;
+      if (nome && razao && doc && logo) return;
+
+      const db = await fetchEmpresaRobusta(supabase, id);
+      if (!mounted || !db) return;
+
+      setEmpresa((prev) => ({
+        nome_fantasia: db.nome_fantasia ?? prev.nome_fantasia,
+        razao_social: db.razao_social ?? prev.razao_social,
+        cpf_cnpj: db.cpf_cnpj ?? prev.cpf_cnpj,
+        logo_url: db.logo_url ?? prev.logo_url,
+      }));
+    })().catch(() => { /* silencioso */ });
+
+    return () => {
+      mounted = false;
+    };
   }, [pathname, supabase]);
 
   /* --------------------- Computados de exibição ---------------------- */
@@ -178,30 +199,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const razaoSocial = empresa.razao_social ?? "";
   const cpfCnpjFmt = formatCpfCnpj(empresa.cpf_cnpj);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.replace("/login");
-  };
+  const handleLogout = React.useCallback(async () => {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      router.replace("/login");
+    }
+  }, [router, supabase]);
 
-  const handleTrocarEmpresa = () => {
+  const handleTrocarEmpresa = React.useCallback(() => {
     router.push("/selecionar-empresa");
-  };
+  }, [router]);
 
   /* ------------------- Sem chrome nas rotas públicas ------------------ */
   if (hideChrome) return <>{children}</>;
 
   /* ------------------------- Placeholder seguro ----------------------- */
-  if (!authChecked) {
-    return (
-      <div className="min-h-dvh bg-white text-gray-900">
-        <div className="flex h-14 items-center border-b px-4 md:px-6" />
-        <main className="mx-auto max-w-[1600px] px-3 py-4 md:px-6 md:py-6">
-          <div className="h-6 w-40 animate-pulse rounded bg-gray-200" />
-          <div className="mt-4 h-4 w-96 animate-pulse rounded bg-gray-200" />
-        </main>
-      </div>
-    );
-  }
+  if (!authChecked) return SHELL_SKELETON;
 
   /* =============================== UI ================================ */
   return (
@@ -212,11 +226,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           role={role}
           enabledFlags={enabledFlags}
           empresaCodigoERP={empresaId}
-          topOffset={90}        // altura do header para não sobrepor
-          railGutter={12}       // “gutter” quando o texto colapsa atrás do ícone
-          collapsedWidth={64}   // largura só de ícones
-          expandWidth={300}     // largura expandida
-          defaultExpanded        // começa expandida (estilo ChatGPT)
+          topOffset={90}
+          railGutter={12}
+          collapsedWidth={64}
+          expandWidth={300}
+          defaultExpanded
         />
       </div>
 
@@ -250,7 +264,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             enabledFlags={enabledFlags}
             empresaCodigoERP={empresaId}
             onNavigate={() => setDrawerOpen(false)}
-            // no mobile, pode manter os defaults internos
           />
         </div>
       </div>

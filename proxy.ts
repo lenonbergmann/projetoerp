@@ -6,7 +6,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 // Rotas que exigem login
 const PROTECTED_PREFIXES = ["/dashboard"];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   // sempre crie uma resposta regravável p/ setar cookies
   const res = NextResponse.next();
 

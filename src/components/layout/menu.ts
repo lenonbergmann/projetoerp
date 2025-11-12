@@ -25,7 +25,7 @@ import {
 export type AppRole = "admin" | "coordenador" | "analista" | "assistente" | "convidado";
 
 export type FeatureFlag =
-  | "faturamento"
+  | "fiscal"
   | "contas_receber"
   | "contas_pagar"
   | "conciliacao_cartao"
@@ -61,7 +61,7 @@ export type MenuItem = {
   match?: MatchStrategy;
   disabled?: boolean;
   soon?: boolean;
-  /** caminho público da imagem 16:9 (ex.: /img/menu/faturamento.jpg|svg) */
+  /** caminho público da imagem 16:9 (ex.: /img/menu/fiscal.jpg|svg) */
   imageSrc?: string;
 };
 
@@ -152,14 +152,14 @@ export const BASE_MENU: MenuItem[] = [
     ],
   },
   {
-    id: "faturamento",
+    id: "fiscal",
     label: "Faturamento",
     description: "Emissão, gestão de documentos e integrações fiscais.",
-    href: "/faturamento",
+    href: "/fiscal",
     icon: Briefcase,
-    feature: "faturamento",
-    match: { type: "startsWith", value: "/faturamento" },
-    imageSrc: "/img/menu/faturamento.svg",
+    feature: "fiscal",
+    match: { type: "startsWith", value: "/fiscal" },
+    imageSrc: "/img/menu/fiscal.svg",
   },
   {
     id: "cr",
@@ -272,7 +272,7 @@ export function buildMenu(ctx: BuildMenuInput): MenuItem[] {
 }
 
 export const ALL_FLAGS: FeatureFlag[] = [
-  "faturamento",
+  "fiscal",
   "contas_receber",
   "contas_pagar",
   "conciliacao_cartao",
