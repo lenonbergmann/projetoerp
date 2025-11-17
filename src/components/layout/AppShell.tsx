@@ -3,314 +3,336 @@
 import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
 
-import SidebarRailPro from "./SidebarRailPro";
 import TopbarPro from "./TopbarPro";
 import { PeriodProvider } from "./PeriodContext";
 
 import { createClientComponentClient } from "@/lib/supabase/clientComponentClient";
-import type { User, AuthChangeEvent, Session } from "@supabase/supabase-js";
+import type { User, Session } from "@supabase/supabase-js";
 
-import type { AppRole, FeatureFlag } from "./menu";
-import { ALL_FLAGS } from "./menu";
+// Ícones da barra de módulos
+import {
+  LayoutDashboard,
+  FolderTree,
+  FileText,
+  Ship,
+  ArrowUpToLine,
+  CircleDollarSign,
+  ReceiptText,
+  CreditCard,
+  Landmark,
+  LineChart,
+  BarChart3,
+  UploadCloud,
+} from "lucide-react";
 
-/* ============================== Constantes ============================== */
+/* ============================================================================
+ * Constantes / helpers
+ * ========================================================================== */
+
 const HIDE_SHELL_PATHS = ["/login"] as const;
 
 const SHELL_SKELETON = (
-  <div className="min-h-dvh bg-white text-gray-900">
-    <div className="flex h-14 items-center border-b px-4 md:px-6" />
-    <main className="mx-auto max-w-[1600px] px-3 py-4 md:px-6 md:py-6">
-      <div className="h-6 w-40 animate-pulse rounded bg-gray-200" />
-      <div className="mt-4 h-4 w-96 animate-pulse rounded bg-gray-200" />
+  <div className="min-h-dvh bg-background text-foreground flex flex-col">
+    <header className="flex h-14 items-center border-b bg-card/60 px-4 md:px-6" />
+    <div className="h-11 border-b bg-card/40 px-4 md:px-6" />
+    <main className="px-4 py-6 md:px-8">
+      <div className="h-10 w-40 rounded-full bg-muted mb-4" />
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="h-32 rounded-xl bg-muted" />
+        <div className="h-32 rounded-xl bg-muted" />
+        <div className="h-32 rounded-xl bg-muted" />
+      </div>
     </main>
   </div>
 );
 
-/* ============================== Helpers ============================== */
-function safeGetCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
-  const parts = document.cookie.split("; ");
-  for (const p of parts) {
-    const [k, ...rest] = p.split("=");
-    if (decodeURIComponent(k) === name) return decodeURIComponent(rest.join("="));
-  }
-  return null;
-}
-function nameFromEmail(email?: string | null) {
-  if (!email) return "Usuário";
-  const base = email.split("@")[0] || "Usuário";
-  return base
-    .split(/[._-]+/i)
-    .map((p) => (p ? p[0].toUpperCase() + p.slice(1) : ""))
-    .join(" ");
-}
-function formatCpfCnpj(raw?: string | null) {
-  if (!raw) return "";
-  const digits = (raw.match(/\d/g) || []).join("");
-  if (digits.length === 11)
-    return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-  if (digits.length === 14)
-    return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
-  return raw;
-}
-
-/* ================================ Types =============================== */
-type EmpresaInfo = {
-  nome_fantasia: string | null;
-  razao_social: string | null;
-  cpf_cnpj: string | null;
-  logo_url: string | null;
+type NavItem = {
+  label: string;
+  href: string;
+  matchPrefix: string;
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
 };
 
-/* ============================= AppShell ============================== */
-export default function AppShell({ children }: { children: React.ReactNode }) {
+/** Itens da barra de navegação logo abaixo do Topbar */
+const NAV_ITEMS: NavItem[] = [
+  {
+    label: "Dashboard",
+    href: "/dashboard",
+    matchPrefix: "/dashboard",
+    icon: LayoutDashboard,
+  },
+  {
+    label: "Cadastros",
+    href: "/cadastro",
+    matchPrefix: "/cadastro",
+    icon: FolderTree,
+  },
+  {
+    label: "Fiscal",
+    href: "/fiscal",
+    matchPrefix: "/fiscal",
+    icon: FileText,
+  },
+  {
+    label: "Importação",
+    href: "/importacoes",
+    matchPrefix: "/importacoes",
+    icon: Ship,
+  },
+  {
+    label: "Exportação",
+    href: "/exportacoes",
+    matchPrefix: "/exportacoes",
+    icon: ArrowUpToLine,
+  },
+  {
+    label: "Contas a receber",
+    href: "/contas-receber",
+    matchPrefix: "/contas-receber",
+    icon: CircleDollarSign,
+  },
+  {
+    label: "Contas a pagar",
+    href: "/contas-pagar",
+    matchPrefix: "/contas-pagar",
+    icon: ReceiptText,
+  },
+  {
+    label: "Conciliação de cartão",
+    href: "/conciliacao-cartao",
+    matchPrefix: "/conciliacao-cartao",
+    icon: CreditCard,
+  },
+  {
+    label: "Conciliação Bancária",
+    href: "/conciliacao-bancaria",
+    matchPrefix: "/conciliacao-bancaria",
+    icon: Landmark,
+  },
+  {
+    label: "Projeções",
+    href: "/projecoes",
+    matchPrefix: "/projecoes",
+    icon: LineChart,
+  },
+  {
+    label: "Relatórios",
+    href: "/relatorios",
+    matchPrefix: "/relatorios",
+    icon: BarChart3,
+  },
+  {
+    label: "Upload de arquivos",
+    href: "/upload-arquivos",
+    matchPrefix: "/upload-arquivos",
+    icon: UploadCloud,
+  },
+];
+
+/* ============================================================================
+ * Barra de navegação secundária (logo abaixo do Topbar)
+ * ========================================================================== */
+
+function SecondaryTopbarNav({ empresaNome }: { empresaNome?: string | null }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  const supabase = React.useMemo(() => createClientComponentClient(), []);
+  // no momento não usamos empresaNome, mas mantemos para compatibilidade
+  void empresaNome;
 
-  const hideChrome = React.useMemo(
-    () => HIDE_SHELL_PATHS.some((p) => (pathname || "").startsWith(p)),
-    [pathname]
+  return (
+    <div
+      className="
+        sticky top-14 z-30
+        px-2 md:px-6
+        bg-white/80 dark:bg-neutral-900/70
+        backdrop-blur-md
+        border-b border-black/5 dark:border-white/10
+      "
+    >
+      <nav
+        className="
+          mt-2 mb-3
+          flex gap-2 overflow-x-auto
+          rounded-xl
+          px-2 md:px-4 py-2
+          bg-white/70 dark:bg-neutral-800/70
+          backdrop-blur-xl
+        "
+      >
+        {NAV_ITEMS.map((item) => {
+          const isActive =
+            pathname === item.href || pathname.startsWith(item.matchPrefix);
+
+          const Icon = item.icon;
+
+          const baseBtn = `
+            inline-flex items-center gap-2
+            rounded-full
+            px-4 py-1.5
+            text-sm font-medium
+            whitespace-nowrap
+            transition-all
+            duration-150 ease-out
+            border
+          `;
+
+          const activeBtn = `
+            bg-white dark:bg-neutral-700
+            text-neutral-900 dark:text-white
+            border-black/10 dark:border-white/15
+            shadow-[0_2px_6px_rgba(15,23,42,0.18)]
+            scale-[1.01]
+          `;
+
+          const inactiveBtn = `
+            bg-transparent
+            text-neutral-700 dark:text-neutral-300
+            border-transparent
+            hover:bg-white/80 hover:dark:bg-neutral-700/50
+            hover:text-neutral-900 hover:dark:text-white
+            hover:border-black/5 hover:dark:border-white/10
+            hover:shadow-[0_2px_4px_rgba(15,23,42,0.12)]
+          `;
+
+          return (
+            <button
+              key={item.href}
+              onClick={() => router.push(item.href)}
+              className={`${baseBtn} ${isActive ? activeBtn : inactiveBtn}`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
+
+
+
+/* ============================================================================
+ * AppShell
+ * ========================================================================== */
+
+type AppShellProps = {
+  children: React.ReactNode;
+};
+
+export default function AppShell({ children }: AppShellProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const supabase = createClientComponentClient();
+
+  const [user, setUser] = React.useState<User | null>(null);
+  const [session, setSession] = React.useState<Session | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  const shouldHideShell = HIDE_SHELL_PATHS.includes(
+    pathname as (typeof HIDE_SHELL_PATHS)[number]
   );
 
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
-
-  // Auth state
-  const [user, setUser] = React.useState<User | null>(null);
-  const [authChecked, setAuthChecked] = React.useState(false);
-
-  // Empresa state
-  const [empresaId, setEmpresaId] = React.useState<string | null>(null);
-  const [empresa, setEmpresa] = React.useState<EmpresaInfo>({
-    nome_fantasia: null,
-    razao_social: null,
-    cpf_cnpj: null,
-    logo_url: null,
-  });
-
-  /* ------------------------ Sessão do usuário ------------------------ */
   React.useEffect(() => {
-    let mounted = true;
+    let isMounted = true;
 
-    async function bootstrap() {
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (!mounted) return;
-        const sess = data.session ?? null;
-        setUser(sess?.user ?? null);
-      } finally {
-        if (mounted) setAuthChecked(true);
+    async function loadSession() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!isMounted) return;
+
+      setSession(session);
+      setUser(session?.user ?? null);
+      setLoading(false);
+
+      if (!session && pathname !== "/login") {
+        router.replace("/login");
       }
     }
 
-    const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event: AuthChangeEvent, session: Session | null) => {
-        setUser(session?.user ?? null);
-        setAuthChecked(true);
+    loadSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+
+      if (!session && pathname !== "/login") {
+        router.replace("/login");
       }
-    );
-
-    bootstrap();
+    });
 
     return () => {
-      mounted = false;
-      sub?.subscription?.unsubscribe?.();
+      isMounted = false;
+      subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [pathname, router, supabase]);
 
-  /* -------------------- Proteção de rotas (client-side) -------------------- */
-  React.useEffect(() => {
-    if (!authChecked) return;
-    const isPublic = HIDE_SHELL_PATHS.some((p) => (pathname || "").startsWith(p));
-    if (!user && !isPublic) router.replace("/login");
-  }, [authChecked, user, pathname, router]);
+  // Login não usa AppShell
+  if (shouldHideShell) {
+    return <>{children}</>;
+  }
 
-  /* ----------------------- Empresa (cookies + DB) ---------------------- */
-  React.useEffect(() => {
-    let mounted = true;
+  if (loading) {
+    return SHELL_SKELETON;
+  }
 
-    const id = safeGetCookie("empresaId");
-    const nome = safeGetCookie("empresaNomeFantasia") || safeGetCookie("empresaNome") || null;
-    const razao = safeGetCookie("empresaRazaoSocial");
-    const doc = safeGetCookie("empresaCpfCnpj");
-    const logo = safeGetCookie("empresaLogoUrl");
+  // user para o TopbarPro (usa metadata do Supabase)
+  const uiUser = React.useMemo(
+    () => ({
+      name:
+        (user?.user_metadata as any)?.full_name ??
+        user?.email ??
+        "Usuário",
+      avatarUrl:
+        (user?.user_metadata as any)?.avatar_url ?? null,
+      role: (user?.app_metadata as any)?.role ?? null,
+    }),
+    [user]
+  );
 
-    setEmpresaId(id);
-
-    if (nome || razao || doc || logo) {
-      setEmpresa({
-        nome_fantasia: nome,
-        razao_social: razao,
-        cpf_cnpj: doc,
-        logo_url: logo,
-      });
-    }
-
-    (async () => {
-      if (!id) return;
-      if (nome && razao && doc && logo) return;
-
-      const db = await fetchEmpresaRobusta(supabase, id);
-      if (!mounted || !db) return;
-
-      setEmpresa((prev) => ({
-        nome_fantasia: db.nome_fantasia ?? prev.nome_fantasia,
-        razao_social: db.razao_social ?? prev.razao_social,
-        cpf_cnpj: db.cpf_cnpj ?? prev.cpf_cnpj,
-        logo_url: db.logo_url ?? prev.logo_url,
-      }));
-    })().catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [pathname, supabase]);
-
-  /* --------------------- Computados de exibição ---------------------- */
-  const displayName = React.useMemo(() => {
-    const md = (user?.user_metadata || {}) as Record<string, any>;
-    return md.full_name || md.name || md.user_name || nameFromEmail(user?.email);
-  }, [user]);
-
-  const avatarUrl = React.useMemo(() => {
-    const md = (user?.user_metadata || {}) as Record<string, any>;
-    return md.avatar_url || md.picture || null;
-  }, [user]);
-
-  const role: AppRole = React.useMemo(() => {
-    const am = (user?.app_metadata || {}) as Record<string, any>;
-    const um = (user?.user_metadata || {}) as Record<string, any>;
-    return (am.role ?? um.role ?? "convidado") as AppRole;
-  }, [user]);
-
-  const enabledFlags: FeatureFlag[] = ALL_FLAGS;
-
-  const nomeFantasia =
-    empresa.nome_fantasia ?? (empresaId ? `Empresa ${empresaId}` : "Nenhuma selecionada");
-  const razaoSocial = empresa.razao_social ?? "";
-  const cpfCnpjFmt = formatCpfCnpj(empresa.cpf_cnpj);
+  // empresa inicial (TopbarPro depois busca empresas no banco e atualiza)
+  const empresaInicial = React.useMemo(
+    () => ({
+      nome_fantasia: null,
+      razao_social: null,
+      cpf_cnpj: null,
+      logo_url: null,
+      codigo_erp: null,
+    }),
+    []
+  );
 
   const handleLogout = React.useCallback(async () => {
-    try {
-      await supabase.auth.signOut();
-    } finally {
-      router.replace("/login");
-    }
+    await supabase.auth.signOut();
+    router.replace("/login");
   }, [router, supabase]);
-
-  const handleTrocarEmpresa = React.useCallback(() => {
-    router.push("/selecionar-empresa");
-  }, [router]);
-
-  if (hideChrome) return <>{children}</>;
-  if (!authChecked) return SHELL_SKELETON;
 
   return (
     <PeriodProvider>
-      <div className="min-h-dvh">
-        <div className="hidden md:block">
-          <SidebarRailPro
-            role={role}
-            enabledFlags={enabledFlags}
-            empresaCodigoERP={empresaId}
-            topOffset={90}
-            railGutter={12}
-            collapsedWidth={64}
-            expandWidth={300}
-            defaultExpanded
-          />
-        </div>
+      <div className="min-h-dvh bg-background text-foreground flex flex-col">
+        {/* Topbar COMPLETO que você já tem */}
+        <TopbarPro
+          empresa={empresaInicial}
+          user={uiUser}
+          onLogout={handleLogout}
+        />
 
-        {/* Drawer mobile */}
-        <div
-          className={[
-            "fixed inset-0 z-40 md:hidden transition",
-            drawerOpen ? "visible" : "invisible",
-          ].join(" ")}
-          aria-hidden={!drawerOpen}
-        >
-          <div
-            className={[
-              "absolute inset-0 bg-black/40 transition-opacity",
-              drawerOpen ? "opacity-100" : "opacity-0",
-            ].join(" ")}
-            onClick={() => setDrawerOpen(false)}
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Menu"
-            className={[
-              "absolute inset-y-0 left-0 w-72 bg-white border-r shadow-xl transition-transform outline-none",
-              drawerOpen ? "translate-x-0" : "-translate-x-full",
-            ].join(" ")}
-            tabIndex={-1}
-          >
-            <SidebarRailPro
-              role={role}
-              enabledFlags={enabledFlags}
-              empresaCodigoERP={empresaId}
-              onNavigate={() => setDrawerOpen(false)}
-            />
-          </div>
-        </div>
+        {/* Barra de módulos fixa com efeito 3D e ícones */}
+        <SecondaryTopbarNav />
 
-        {/* Wrapper principal */}
-        <div
-          className="
-            flex min-h-dvh flex-col
-            ml-0 md:ml-[var(--sidebar-width,64px)]
-            transition-[margin] md:transition-[margin]
-            duration-200 ease-out
-          "
-        >
-          <TopbarPro
-            empresa={{
-              nome_fantasia: nomeFantasia,
-              razao_social: razaoSocial,
-              cpf_cnpj: cpfCnpjFmt,
-              logo_url: empresa.logo_url,
-            }}
-            user={{ name: displayName, avatarUrl, role }}
-            onLogout={handleLogout}
-            onTrocarEmpresa={handleTrocarEmpresa}
-            onOpenMenu={() => setDrawerOpen(true)}
-          />
 
-          <main className="min-w-0 flex-1 bg-gray-50/50">
-            <div className="mx-auto max-w-[1600px] px-3 py-4 md:px-6 md:py-6">{children}</div>
-          </main>
-        </div>
+        {/* Conteúdo principal */}
+        <main className="flex-1 px-4 py-4 md:px-8 md:py-6">
+          {children}
+        </main>
       </div>
     </PeriodProvider>
   );
 }
 
-/* ============================ Data fetch ============================ */
-async function fetchEmpresaRobusta(
-  supabase: ReturnType<typeof createClientComponentClient>,
-  empresaId: string
-): Promise<EmpresaInfo | null> {
-  const asNumber = Number(empresaId);
-  const isNumeric = Number.isFinite(asNumber);
-
-  if (isNumeric) {
-    const { data, error } = await supabase
-      .from("empresas_bpo")
-      .select("nome_fantasia, razao_social, cpf_cnpj, logo_url")
-      .eq("codigo_erp", asNumber)
-      .maybeSingle();
-
-    if (!error && data) return data as EmpresaInfo;
-  }
-
-  const { data, error } = await supabase
-    .from("empresas_bpo")
-    .select("nome_fantasia, razao_social, cpf_cnpj, logo_url")
-    .eq("id", empresaId)
-    .maybeSingle();
-
-  if (!error && data) return data as EmpresaInfo;
-
-  return null;
-}
