@@ -1,0 +1,11 @@
+# Builds e dependências
+.next
+node_modules
+dist
+coverage
+
+# Saídas diversas
+*.log
+
+# Se tiver dumps grandes, etc.
+*.min.js
